@@ -91,31 +91,44 @@ int KB_code = 0;
 int sleep_amount = 200;
 pos block_spawn = {1, 5};
 
-void free_board(char **board, int height);
+void free_grid(char **board, int height);
 void sleep_ms(int milliseconds);
 char **init_board();
-char **board_for_display();
-void display_board();
-void free_board();
+char **board_for_display(char **board);
+char **block_queue_for_display(block **block_queue);
+void display_board_and_block_queue(char **board, block **block_queue);
 block *generate_block();
-shape_tiles get_tiles(block *curr_block);
+shape_tiles get_tiles(block *curr_block, int rotation);
 void update_board(char *(**board), block *curr_block, bool remove);
 bool is_valid(char **board, block *curr_block);
 bool is_obstructed(char **board, block *curr_block);
 void place(char *(**board), block *curr_block);
-void clear_rows(char *(**board));
+void clear_rows(char *(**board), int *score);
+void swap(block **curr_block, block **held_block);
+void display_held(block *held_block);
+void display(char **board, block *held_block, int sleep_amount, int *score, block **block_queue);
 
 int main(int argc, char *argv[]) {
   char **board = init_board();
 
   srand( time(NULL) );
 
+  block **block_queue = malloc(4 * sizeof(block *));
+  for (int i = 0; i < 4; i++) {
+    block_queue[i] = generate_block();
+  }
   block *curr_block = NULL;
+  block *held_block = NULL;
+  int score = 0;
   int i = 0;
   bool game_over = false;
   while (!game_over) {
     if (!curr_block) {
-      curr_block = generate_block();
+      curr_block = block_queue[0];
+      for (int i = 0; i < 3; i++) {
+        block_queue[i] = block_queue[i + 1];
+      }
+      block_queue[3] = generate_block();
       if (!is_valid(board, curr_block) || is_obstructed(board, curr_block)) {
         place(&board, curr_block);
         game_over = true;
@@ -165,10 +178,10 @@ int main(int argc, char *argv[]) {
         place(&board, curr_block);
         free(curr_block);
         curr_block = NULL;
-        clear_rows(&board);
-        display_board(board);
-        sleep_ms(sleep_amount);
+        display(board, held_block, sleep_amount, &score, block_queue);
         continue;
+      } else if (KB_code == 'c') {
+        swap(&curr_block, &held_block);
       } else if (KB_code == 'q') {
         printf("Quitting...\n");
         break;
@@ -193,24 +206,30 @@ int main(int argc, char *argv[]) {
     if (curr_block) {
       update_board(&board, curr_block, false);
     }
-    clear_rows(&board);
-    display_board(board);
-    sleep_ms(sleep_amount);
+    display(board, held_block, sleep_amount, &score, block_queue);
   }
 
   if (game_over) {
     clrscr();
-    display_board(board);
-    printf("Game over!");
+    if (held_block != NULL) {
+      display_held(held_block);
+    }
+    display_board_and_block_queue(board, block_queue);
+    printf("Game over!\nYour score was %d", score);
   }
 
-  free_board(board, HEIGHT);
+  free_grid(board, HEIGHT);
   free(curr_block);
+  free(held_block);
+  for (int i = 0; i < 4; i++) {
+    free(block_queue[i]);
+  }
+  free(block_queue);
 
   return 0;
 }
 
-block *generate_block(char **board) {
+block *generate_block() {
   block *new_block = malloc(sizeof(block));
   new_block->p = block_spawn;
   int shape = rand() % 7;
@@ -237,7 +256,7 @@ block *generate_block(char **board) {
 
 void update_board(char *(**board), block *curr_block, bool remove) {
   pos p = curr_block->p;
-  shape_tiles shaped_tiles = get_tiles(curr_block);
+  shape_tiles shaped_tiles = get_tiles(curr_block, -1);
   pos *tiles = shaped_tiles.tiles;
   int r, c;
   for (int i = 0; i < 4; i++) {
@@ -254,8 +273,11 @@ void update_board(char *(**board), block *curr_block, bool remove) {
   }
 }
 
-shape_tiles get_tiles(block *curr_block) {
-  int rotation = curr_block->rotation;
+shape_tiles get_tiles(block *curr_block, int rotation) {
+  if (rotation == -1) {
+    rotation = curr_block->rotation;
+  }
+
   int shape = curr_block->shape;
   shape_tiles tiles;
   switch (shape) {
@@ -285,7 +307,7 @@ shape_tiles get_tiles(block *curr_block) {
 }
 
 bool is_valid(char **board, block *curr_block) {
-  shape_tiles shaped_tiles = get_tiles(curr_block);
+  shape_tiles shaped_tiles = get_tiles(curr_block, -1);
   pos *tiles = shaped_tiles.tiles;
   pos p = curr_block->p;
   int r, c;
@@ -299,7 +321,7 @@ bool is_valid(char **board, block *curr_block) {
 }
 
 bool is_obstructed(char **board, block *curr_block) {
-  shape_tiles shaped_tiles = get_tiles(curr_block);
+  shape_tiles shaped_tiles = get_tiles(curr_block, -1);
   pos *tiles = shaped_tiles.tiles;
   pos p = curr_block->p;
   int bottom_row_len = 0;
@@ -337,7 +359,7 @@ bool is_obstructed(char **board, block *curr_block) {
 }
 
 void place(char *(**board), block *curr_block) {
-  shape_tiles shaped_tiles = get_tiles(curr_block);
+  shape_tiles shaped_tiles = get_tiles(curr_block, -1);
   pos *tiles = shaped_tiles.tiles;
   pos p = curr_block->p;
   int r, c;
@@ -347,7 +369,7 @@ void place(char *(**board), block *curr_block) {
   }
 }
 
-void clear_rows(char *(**board)) {
+void clear_rows(char *(**board), int *score) {
   bool filled;
   for (int i = 0; i < HEIGHT; i++) {
     filled = true;
@@ -357,12 +379,26 @@ void clear_rows(char *(**board)) {
       }
     }
     if (filled) {
+      (*score)++;
       for (int i2 = i; i2 > 3; i2--) {
         for (int j = 0; j < WIDTH; j++) {
           (*board)[i2][j] = (*board)[i2 - 1][j];
         }
       }
     }
+  }
+}
+
+void swap(block **curr_block, block **held_block) {
+  if (*held_block == NULL) {
+    *held_block = *curr_block;
+    *curr_block = generate_block();
+    (*curr_block)->p = (*held_block)->p;
+  } else {
+    block *temp = *curr_block;
+    (*held_block)->p = temp->p;
+    *curr_block = *held_block;
+    *held_block = temp;
   }
 }
 
@@ -387,13 +423,19 @@ char **init_board() {
 }
 
 char **board_for_display(char **board) {
-  char **result = malloc((HEIGHT + 1) * sizeof(char *));
+  char **result = malloc((HEIGHT + 2) * sizeof(char *));
   char buffer[WIDTH + 2];
-  for (int i = 0; i < HEIGHT; i++) {
+  for (int i = 0; i < WIDTH + 2; i++) {
+    buffer[i] = '-';
+  }
+  result[0] = malloc((WIDTH + 2) * sizeof(char));
+  strcpy(result[0], buffer);
+
+  for (int i = 1; i < HEIGHT + 1; i++) {
     result[i] = malloc((WIDTH + 2) * sizeof(char));
     buffer[0] = '|';
     for (int j = 0; j < WIDTH; j++) {
-      buffer[j + 1] = board[i][j];
+      buffer[j + 1] = board[i - 1][j];
     }
     buffer[WIDTH + 1] = '|';
     strcpy(result[i], buffer);
@@ -403,24 +445,124 @@ char **board_for_display(char **board) {
     buffer[i] = '-';
   }
   // buffer[WIDTH + 1] = '/';
-  result[HEIGHT] = malloc((WIDTH + 2) * sizeof(char));
-  strcpy(result[HEIGHT], buffer);
+  result[HEIGHT + 1] = malloc((WIDTH + 2) * sizeof(char));
+  strcpy(result[HEIGHT + 1], buffer);
+
 
   return result;
 }
 
-void display_board(char **board) {
+char **block_queue_for_display(block **block_queue) {
+  int height = 13;
+  char **result = malloc(height * sizeof(char *));
+  char buffer[WIDTH + 1];
+  for (int i = 0; i < height; i++) {
+    result[i] = malloc((WIDTH + 1) * sizeof(char));
+  }
+  for (int i = 0; i < WIDTH + 1; i++) {
+    buffer[i] = '-';
+  }
+  strcpy(result[0], buffer);
+
+  for (int i = 0; i < 4; i++) {
+    shape_tiles shaped_tiles = get_tiles(block_queue[i], 0);
+    pos *tiles = shaped_tiles.tiles;
+    pos p0 = { 1 + tiles[0].row, WIDTH / 2 + tiles[0].col };
+    pos p1 = { 1 + tiles[1].row, WIDTH / 2 + tiles[1].col };
+    pos p2 = { 1 + tiles[2].row, WIDTH / 2 + tiles[2].col };
+    pos p3 = { 1 + tiles[3].row, WIDTH / 2 + tiles[3].col };
+
+    for (int j = 0; j < 2; j++) {
+      for (int k = 0; k < WIDTH; k++) {
+        if ((j == p0.row && k == p0.col) || (j == p1.row && k == p1.col) || (j == p2.row && k == p2.col) || (j == p3.row && k == p3.col)) {
+          buffer[k] = '#';
+        } else {
+          buffer[k] = ' ';
+        }
+      }
+      buffer[WIDTH] = '|';
+      strcpy(result[i * 3 + j + 1], buffer);
+      // printf("%s\n", result[i * 3 + j]);
+    }
+    if (i < 3) {
+      for (int k = 0; k < WIDTH; k++) {
+        buffer[k] = ' ';
+      }
+      buffer[WIDTH] = '|';
+      strcpy(result[(i + 1) * 3], buffer);
+      // printf("%s\n", result[(i + 1) * 3]);
+    }
+  }
+
+  for (int i = 0; i < WIDTH + 1; i++) {
+    buffer[i] = '-';
+  }
+  strcpy(result[height - 1], buffer);
+
+  // for (int i = 0; i < height + 1; i++) {
+  //   for (int j = 0; j < WIDTH + 1; j++) {
+  //     printf("%c", result[i][j]);
+  //   }
+  //   printf("\n");
+  // }
+  return result;
+}
+
+void display_board_and_block_queue(char **board, block **block_queue) {
   char **board_display = board_for_display(board);
-  for (int i = 0; i < HEIGHT + 1; i++) {
+  char **block_queue_display = block_queue_for_display(block_queue);
+  for (int i = 0; i < HEIGHT + 2; i++) {
     for (int j = 0; j < WIDTH + 2; j++) {
       printf("%c", board_display[i][j]);
     }
+    if (i < 13) {
+      for (int j = 0; j < WIDTH + 1; j++) {
+        printf("%c", block_queue_display[i][j]);
+      }
+    }
     printf("\n");
   }
-  free_board(board_display, HEIGHT + 1);
+  free_grid(board_display, HEIGHT + 2);
+  free_grid(block_queue_display, 13);
 }
 
-void free_board(char **board, const int height) {
+void display_held(block *held_block) {
+  for (int i = 0; i < WIDTH + 2; i++) {
+    printf("-");
+  }
+  printf("\n");
+
+  shape_tiles shaped_tiles = get_tiles(held_block, 0);
+  pos *tiles = shaped_tiles.tiles;
+  pos p0 = { 1 + tiles[0].row, WIDTH / 2 + tiles[0].col };
+  pos p1 = { 1 + tiles[1].row, WIDTH / 2 + tiles[1].col };
+  pos p2 = { 1 + tiles[2].row, WIDTH / 2 + tiles[2].col };
+  pos p3 = { 1 + tiles[3].row, WIDTH / 2 + tiles[3].col };
+
+  for (int i = 0; i < 2; i++) {
+    printf("|");
+    for (int j = 0; j < WIDTH; j++) {
+      if ((i == p0.row && j == p0.col) || (i == p1.row && j == p1.col) || (i == p2.row && j == p2.col) || (i == p3.row && j == p3.col)) {
+        printf("#");
+      } else {
+        printf(" ");
+      }
+    }
+    printf("|\n");
+  }
+}
+
+void display(char **board, block *held_block, int sleep_amount, int *score, block **block_queue) {
+  clear_rows(&board, score);
+  if (held_block != NULL) {
+    display_held(held_block);
+  }
+  display_board_and_block_queue(board, block_queue);
+  printf("Score: %d", *score);
+  sleep_ms(sleep_amount);
+}
+
+void free_grid(char **board, const int height) {
   for (int i = 0; i < height; i++) {
     free(board[i]);
   }
