@@ -7,8 +7,6 @@
 
 #ifdef _WIN32
 #define clrscr() system("cls")
-#elif defined(__linux__)
-#define clrscr() system("clear")
 #else
 #error Platform not supported
 #endif

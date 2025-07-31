@@ -1,4 +1,6 @@
 # C Tetris Remake
-My attempts at remaking tetris in C
+Remaking Tetris in C through the terminal
 
-First attempt through animating in the console
+First attempt at animating in the console
+
+May only work on Windows since I did this before I had any Linux experience.
